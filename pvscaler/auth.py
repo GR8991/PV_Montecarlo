@@ -237,5 +237,5 @@ def require_login() -> str:
                 else:
                     st.error("Username or password is incorrect.")
         _html(f"""<div class="ss-note">{_LOCK}<span>Access is managed by the app owner. Ask them to add you if you need an account. Uploaded files are processed in memory and are not stored.</span></div>""")
-    _html("""<div class="ss-foot"><span>Technical analysis only. No financial analysis.</span><span>Results are derived from PVsyst outputs and are not PVsyst simulations.</span></div>""")
+    _html("""<div class="ss-foot"><span>Technical analysis only. No financial analysis.</span><span>Developed by GANGARAJU PILLY</span></div>""")
     st.stop()
