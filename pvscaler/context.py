@@ -74,7 +74,7 @@ def base_ctx(cfg, report, meta):
                 meta=dict(project=rf.get("project") or meta.get("project", ""), variant=rf.get("variant") or "", version=rf.get("version"),
                           generated=dt.date.today().isoformat(), series_short=_short(meta.get("series_file", "-")), column=meta.get("column", "-"),
                           units=meta.get("units", "-"), add_back=meta.get("add_back", False), synthetic=meta.get("synthetic", False),
-                          plant=meta.get("plant")))
+                          plant=meta.get("plant"), author=(meta.get("author") or "").strip() or None))
 
 
 def _short(s, n=24):
@@ -196,6 +196,7 @@ def excel_workbook(sim, series, report, meta, include_8760=True) -> bytes:
     A = sim["agg"]
     inputs = pd.DataFrame([
         ("Project", (report.fields.get("project") if report else None) or meta.get("project", "")),
+        ("Prepared by", (meta.get("author") or "").strip() or "-"),
         ("Hourly file", meta.get("series_file", "")), ("Column", meta.get("column", "")),
         ("Years simulated", f"{cfg.y0}-{cfg.y1} ({cfg.cal(cfg.y0)}-{cfg.cal(cfg.y1)})"), ("Project year 1 (COD)", cfg.cod),
         ("Degradation %/yr", cfg.deg), ("Degradation model", cfg.deg_model), ("Weather sigma %", cfg.sig_w),
