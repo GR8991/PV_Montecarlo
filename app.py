@@ -168,6 +168,8 @@ if st.session_state.get("_loaded") != sig:
     st.session_state.pop("cap", None)
     st.session_state.pop("pnom", None)
 
+if report and report.table_note:
+    st.info(report.table_note)
 if report:
     if F.get("pnom_note"):
         st.warning(F["pnom_note"])
@@ -183,6 +185,12 @@ if cands:
     unit_sel = c2.selectbox("Units in file", ["Auto", "W", "kW", "MW"], key="unit_sel", help="Values are treated as average power per hour.")
     pnom = F.get("pnom_mwp")
     fct, unit, guessed = Pp.unit_factor(cand.unit if unit_sel == "Auto" else unit_sel, cand.vmax, pnom)
+    unit_note = None
+    if unit_sel == "Auto":
+        fct, unit, unit_note = Pp.check_units_against_report(cand.values, fct, unit, F.get("annual_mwh"))
+        if unit_note:
+            guessed = False
+            st.warning(unit_note)
     if unit_sel != "Auto":
         guessed = False
     unit_info = (unit, guessed)
