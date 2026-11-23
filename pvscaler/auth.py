@@ -66,7 +66,7 @@ _GRAIN = ("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width
           "<filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter>"
           "<rect width='100%25' height='100%25' filter='url(%23n)' opacity='.55'/></svg>")
 
-# Sunstripe look: black canvas, diagonal red-orange light, wide red wordmark, square outlined buttons
+# Look: black canvas, diagonal red-orange light, wide red wordmark, square outlined buttons
 _CSS = """<style>
 @import url('https://fonts.googleapis.com/css2?family=Krona+One&family=Inter+Tight:wght@300;400;500;600;700;800&display=swap');
 :root {--ss-red:#E5341F; --ss-ember:#C2340E; --ss-ink:#000; --ss-panel:#0B0B0B; --ss-line:#2A2A2A; --ss-text:#F4F4F4; --ss-mute:#A9A9A9; --ss-soft:#C9C9C9;}
@@ -80,8 +80,9 @@ header[data-testid="stHeader"], [data-testid="stToolbar"], [data-testid="stDecor
   background-blend-mode: soft-light, normal, normal, normal; color:var(--ss-text);}
 .stApp, .stApp p, .stApp label, .stApp input, .stApp button {font-family:'Inter Tight', 'Helvetica Neue', Arial, sans-serif !important;}
 .block-container {max-width:1180px; padding-top:0 !important; padding-bottom:3rem;}
-.ss-bar {display:flex; align-items:center; justify-content:space-between; gap:24px; padding:26px 0; margin:0 0 7vh; border-bottom:1px solid rgba(255,255,255,.08);}
-.ss-word {font-family:'Krona One', 'Arial Black', sans-serif; color:var(--ss-red); font-size:22px; font-weight:700; letter-spacing:.06em; line-height:1;}
+.ss-bar {display:flex; align-items:center; justify-content:space-between; gap:24px; padding:30px 0; margin:0 0 7vh; position:relative; z-index:2;
+  background:#000; box-shadow:0 0 0 100vmax #000; clip-path:inset(0 -100vmax); border-bottom:1px solid #000;}
+.ss-word {font-family:'Krona One', 'Arial Black', sans-serif; color:var(--ss-red); font-size:18px; font-weight:700; letter-spacing:.06em; line-height:1;}
 .ss-tag {color:#fff; font-size:12.5px; font-weight:700; letter-spacing:.08em; text-transform:uppercase;}
 .ss-tag span {color:var(--ss-mute); font-weight:500; margin:0 10px;}
 .ss-eyebrow {color:rgba(255,255,255,.82); font-size:12.5px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; margin:0 0 18px;}
@@ -112,7 +113,7 @@ header[data-testid="stHeader"], [data-testid="stToolbar"], [data-testid="stDecor
 .ss-foot {display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; color:#7C7C7C; font-size:12px; margin-top:8vh; padding-top:16px; border-top:1px solid rgba(255,255,255,.08);}
 .stApp [data-testid="stAlert"] {border-radius:0;}
 @media (max-width: 900px) {.ss-hero h1 {font-size:40px;} .ss-lead {font-size:18px;} .ss-body {font-size:15.5px; margin-bottom:24px;} .ss-bar {margin-bottom:4vh;}}
-@media (max-width: 640px) {.ss-cards, .ss-body {display:none;} .ss-lead {margin-bottom:6px;} .ss-form-head p.ss-eyebrow {color:rgba(255,255,255,.82);} .ss-tag span, .ss-tag em {display:none;} .ss-hero h1 {font-size:34px;} .ss-word {font-size:18px;}}
+@media (max-width: 640px) {.ss-cards, .ss-body {display:none;} .ss-tag {display:none;} .ss-lead {margin-bottom:6px;} .ss-form-head p.ss-eyebrow {color:rgba(255,255,255,.82);} .ss-tag span, .ss-tag em {display:none;} .ss-hero h1 {font-size:34px;} .ss-word {font-size:15px;}}
 </style>""".replace("GRAIN", _GRAIN)
 
 _LOCK = ('<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#A9A9A9" stroke-width="2" stroke-linecap="round" '
@@ -128,8 +129,8 @@ def _html(body: str):
 
 
 def _top_bar():
-    _html('<div class="ss-bar"><div class="ss-word">SUNSTRIPE</div>'
-          '<div class="ss-tag">PV Monte Carlo Scaler<span>|</span><em style="font-style:normal">Engineering Tools</em></div></div>')
+    _html('<div class="ss-bar"><div class="ss-word">PV MONTE CARLO SCALER</div>'
+          '<div class="ss-tag">Engineering Tools<span>|</span><em style="font-style:normal">Solar Yield Analysis</em></div></div>')
 
 
 def _hero():
@@ -236,5 +237,5 @@ def require_login() -> str:
                 else:
                     st.error("Username or password is incorrect.")
         _html(f"""<div class="ss-note">{_LOCK}<span>Access is managed by the app owner. Ask them to add you if you need an account. Uploaded files are processed in memory and are not stored.</span></div>""")
-    _html("""<div class="ss-foot"><span>&copy; Sunstripe, Inc. Technical analysis only.</span><span>Results are derived from PVsyst outputs and are not PVsyst simulations.</span></div>""")
+    _html("""<div class="ss-foot"><span>Technical analysis only. No financial analysis.</span><span>Results are derived from PVsyst outputs and are not PVsyst simulations.</span></div>""")
     st.stop()
