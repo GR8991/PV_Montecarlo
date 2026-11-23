@@ -179,6 +179,34 @@ def candidates_from_file(name: str, data: bytes):
 # --------------------------------------------------------------------------
 # units and time step
 # --------------------------------------------------------------------------
+def _energy_scale(ratio: float) -> float:
+    """Factor that brings a value to the reference when it is off by ~1000x (kWh vs MWh vs GWh)."""
+    for k in (1e-3, 1e-6, 1e3):
+        if 0.5 < ratio * k < 2:
+            return k
+    return 1.0
+
+
+def check_units_against_report(values, factor: float, unit: str, annual_mwh: float | None):
+    """If the hourly file's annual energy is ~1000x off the report's E_Grid, return a corrected
+    (factor, unit, note). Otherwise return the inputs unchanged with note None."""
+    if not annual_mwh:
+        return factor, unit, None
+    v = np.asarray(values, dtype=float)
+    per = 4 if len(v) >= 35040 else (2 if len(v) >= 17520 else 1)
+    total = float(v.sum()) * factor / per
+    if total <= 0:
+        return factor, unit, None
+    k = _energy_scale(total / annual_mwh)
+    if k == 1:
+        return factor, unit, None
+    new = factor * k
+    names = {1e-6: "W", 1e-3: "kW", 1.0: "MW", 1e3: "GW"}
+    nu = min(names, key=lambda x: abs(x - new) / x)
+    return new, names[nu], (f"Units corrected to {names[nu]}: with {unit} the file gives {total:,.0f} MWh/yr, "
+                            f"about {1 / k:,.0f} times the report's E_Grid ({annual_mwh:,.0f} MWh).")
+
+
 def unit_factor(unit: str, max_val: float, pnom_mw: float | None = None):
     u = (unit or "").lower()
     if u in ("w", "wh"):
@@ -245,6 +273,7 @@ class Report:
     table: dict | None = None
     found: int = 0
     is_pvsyst: bool = False
+    table_note: str | None = None
 
 
 def parse_report_text(raw: str) -> Report:
@@ -315,6 +344,17 @@ def parse_report_text(raw: str) -> Report:
             if all(rows):
                 r.monthly = [row[gi] for row in rows]
                 r.table = {"cols": cols, "rows": rows, "year": grab_row("Year")}
+                # energy columns may be in kWh (smaller plants / other settings): bring them to MWh
+                yr = r.table["year"]
+                if F.get("annual_mwh") and yr and not math.isnan(yr[gi]) and yr[gi] > 0:
+                    k = _energy_scale(yr[gi] / F["annual_mwh"])
+                    if k != 1:
+                        ecols = [j for j, cname in enumerate(cols) if cname.startswith("E")]
+                        for rw in rows + [yr]:
+                            for j in ecols:
+                                rw[j] = rw[j] * k
+                        r.monthly = [rw[gi] for rw in rows]
+                        r.table_note = f"Monthly table energy columns were in {'kWh' if k < 1 else 'GWh'}; converted to MWh."
     # cross-check DC capacity: annual energy / specific production must give the same MWp
     if F.get("annual_mwh") and F.get("specific_yield"):
         chk = F["annual_mwh"] / F["specific_yield"]          # MWh / (kWh/kWp) = MWp
