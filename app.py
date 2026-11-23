@@ -521,7 +521,9 @@ with st.spinner(f"Simulating {n_years} year(s) × {runs:,} runs…"):
 sim_key = _key(series, dataclasses.astuple(cfg))
 A = sim["agg"]
 years = sim["years"]
-meta = dict(project=F.get("project") or "", series_file=series_file or ("synthetic from monthly" if synthetic else "-"), column=column_label,
+if "author" not in st.session_state:   # default: the signed-in user's display name from secrets [names]
+    st.session_state["author"] = auth._display_name(CURRENT_USER) if CURRENT_USER and CURRENT_USER != "local" else ""
+meta = dict(author=(st.session_state.get("author") or "").strip(), project=F.get("project") or "", series_file=series_file or ("synthetic from monthly" if synthetic else "-"), column=column_label,
             units=unit_info[0] if unit_info else "-", add_back=bool(st.session_state.get("add_back")), synthetic=synthetic,
             plant=(f"Plant size: the original PVsyst design ({fmt(pl['dc_mwp'], 1)} MWp / {fmt(pl['ac_mw'], 1)} MWac) was rescaled to {fmt(ch.mwp, 1)} MWp / {fmt(ch.ac, 1)} MWac "
                    f"(DC/AC {ch.dcac:.2f}) before the year scaling, using the PVsyst loss diagram (inverter efficiency, clipping at the new AC size, auxiliaries, transformer and line losses).")
@@ -671,6 +673,8 @@ st.caption("Monthly values spread the annual P50 (and P90) in the degradation-on
 # 5. report
 # ==========================================================================
 st.header("6 · Report")
+st.text_input("Prepared by", key="author", max_chars=60, placeholder="Your name or initials, e.g. PGR",
+              help="Printed on the cover page, in the footer of every page and as the PDF author. Also used in the plant size report and the Excel workbook. Leave empty to omit.")
 r1, r2, r3 = st.columns([1.3, 1, 1.6])
 scope_opts = ["All years combined", "Single year"] + (["Plant size"] if plant_on else [])
 if st.session_state.get("scope") not in scope_opts:
