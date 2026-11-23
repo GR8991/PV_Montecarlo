@@ -163,11 +163,11 @@ if st.session_state.get("_loaded") != sig:
     st.session_state["sig_t"] = float(F.get("total_sigma_pct") or 7.4)
     st.session_state["col_idx"] = 0
     st.session_state["unit_sel"] = "Auto"
-    st.session_state["add_back"] = False
+    st.session_state["add_back"] = True
     st.session_state["synthetic"] = False
     st.session_state.pop("cap", None)
 
-series, unit_info, notes, column_label, lim = None, None, [], "-", None
+series, unit_info, notes, column_label, lim, eg_series = None, None, [], "-", None, None
 if cands:
     c1, c2, c3 = st.columns([2, 1, 2])
     labels = [c.label for c in cands]
@@ -181,9 +181,11 @@ if cands:
         guessed = False
     unit_info = (unit, guessed)
     series, notes = Pp.to_hourly(cand.values * fct)
+    eg_series = series.copy()
     lim = next((x for x in cands if Pp.is_grid_lim(x) and x.sheet == cand.sheet and x.length == cand.length), None)
     if lim is not None:
-        if c3.checkbox(f"Add back grid-limited energy ({lim.name}). Use when the POI limit does not apply at the MV bus.", key="add_back"):
+        if c3.checkbox(f"Scale the unclipped power (E_Grid + {lim.name}) and re-apply the grid limit (recommended)", key="add_back",
+                       help="E_Grid is already clipped at the grid limit. Scaling it directly understates hours at the limit in poor-weather runs."):
             lf, _, _ = Pp.unit_factor(lim.unit or unit, lim.vmax, pnom)
             series = series + np.maximum(0, Pp.to_hourly(lim.values * lf)[0])
     column_label = (cand.sheet + " > " if cand.sheet else "") + cand.name
@@ -196,7 +198,10 @@ elif report and report.monthly:
         notes, unit_info, column_label = ["Synthetic profile built from the monthly E_Grid table"], ("MW", False), "synthetic"
 synthetic = bool(st.session_state.get("synthetic")) and not cands
 
-prof = E.profile(series) if series is not None else None
+if series is not None and eg_series is None:
+    eg_series = series
+prof = E.profile(eg_series) if series is not None else None          # the file as delivered (E_Grid)
+unclipped = E.profile(series)["annual"] if (series is not None and st.session_state.get("add_back") and lim is not None) else None
 
 # narrative
 parts = []
@@ -207,14 +212,17 @@ if report:
                  + (f". It predicts **{fmt(F['annual_mwh'])} MWh** in simulation year {F.get('sim_year') or 1}" if F.get("annual_mwh") else "")
                  + (f", with P90 at {fmt(F['p90_mwh'] / 1000, 1)} GWh." if F.get("p90_mwh") else "."))
 if prof:
-    src = "The synthetic hourly profile" if synthetic else f"The hourly column **{column_label}**" + (" (with grid-limited energy added back)" if st.session_state.get("add_back") else "")
+    src = "The synthetic hourly profile" if synthetic else f"The hourly column **{column_label}**" + (" (with grid-limited energy added back, so the grid limit is re-applied after scaling)" if st.session_state.get("add_back") else "")
     parts.append(f"{src} gives **{fmt(prof['annual'])} MWh** of generation, peaking at **{fmt(prof['peak'], 1)} MW**"
                  + (f" ({fmt(prof['annual'] / F['pnom_mwp'])} kWh/kWp)" if F.get("pnom_mwp") else "")
                  + f" and producing in {fmt(prof['prod_hours'])} hours of the year.")
+    if unclipped is not None:
+        parts.append(f"Adding the grid-limited energy gives {fmt(unclipped)} MWh of unclipped power; the tool scales this and re-applies the grid limit.")
     if prof["hours_at_peak"] > 50:
         parts.append(f"Output sits at its {fmt(prof['peak'], 1)} MW ceiling for {fmt(prof['hours_at_peak'])} hours, which looks like a POI or inverter limit.")
     if prof["aux"] < -1:
-        parts.append(f"Night values are negative ({fmt(-prof['aux'])} MWh/yr). That is auxiliary consumption, which the grid supplies in the CFE model, so it is kept separate and not scaled.")
+        parts.append(f"Night values are negative ({fmt(-prof['aux'])} MWh/yr, about {fmt(-min(series), 2)} MW). These are transformer no-load (iron) losses supplied by the grid; "
+                     "they are not scaled, and results are reported as net E_Grid like PVsyst (generation minus these losses).")
 st.markdown(" ".join(parts))
 
 kv = []
@@ -224,7 +232,7 @@ if report:
            ("Weather σ / total σ", f"{fmt(F.get('weather_sigma_pct'), 1)} / {fmt(F.get('total_sigma_pct'), 1)} %"), ("Degradation", f"{fmt(F.get('degradation_pct'), 2)} %/yr")]
 if prof:
     kv += [("Hourly generation", f"{fmt(prof['annual'])} MWh"), ("Peak output", f"{fmt(prof['peak'], 1)} MW"),
-           ("Capacity factor (AC)", f"{fmt(prof['annual'] / ((F.get('grid_limit_mw') or prof['peak']) * 8760) * 100, 1)} %"), ("Aux import", f"{fmt(-prof['aux'])} MWh/yr")]
+           ("Capacity factor (AC)", f"{fmt(prof['annual'] / ((F.get('grid_limit_mw') or prof['peak']) * 8760) * 100, 1)} %"), ("Night import (transformer losses)", f"{fmt(-prof['aux'])} MWh/yr")]
 for i in range(0, len(kv), 5):
     cols = st.columns(5)
     for col, (k, v) in zip(cols, kv[i:i + 5]):
@@ -249,11 +257,11 @@ if prof:
     if F.get("annual_mwh"):
         net = prof["annual"] + prof["aux"]
         dpc = (net - F["annual_mwh"]) / F["annual_mwh"] * 100
-        if st.session_state.get("add_back"):
-            checks.append(("blue", f"With grid-limited energy added back, generation is {fmt((prof['annual'] - F['annual_mwh']) / F['annual_mwh'] * 100, 1)}% above the report E_Grid, as expected."))
-        else:
-            checks.append(("green" if abs(dpc) < 1 else "orange", f"Hourly net energy {fmt(net)} MWh vs report {fmt(F['annual_mwh'])} MWh ({dpc:+.2f}%)"
-                           + (", the file matches the report." if abs(dpc) < 1 else ". The file may be post-processed or from a different variant.")))
+        checks.append(("green" if abs(dpc) < 1 else "orange", f"Hourly net energy {fmt(net)} MWh vs report {fmt(F['annual_mwh'])} MWh ({dpc:+.2f}%)"
+                       + (", the file matches the report." if abs(dpc) < 1 else ". The file may be post-processed or from a different variant.")))
+    if unclipped is not None:
+        checks.append(("blue", f"Scaling uses the unclipped power ({fmt(unclipped)} MWh/yr, peak {fmt(float(np.max(series)), 1)} MW) and re-applies the grid limit, "
+                               "so year 1 without weather variation reproduces E_Grid exactly."))
     if F.get("sim_year") == 1:
         checks.append(("blue", "PVsyst simulated year 1, so the file already includes year-1 degradation. Year N applies N−1 further years."))
     elif F.get("sim_year"):
@@ -295,9 +303,30 @@ with st.expander("Advanced: weather pattern and power limits"):
     d1, d2, d3, d4, d5 = st.columns(5)
     sig_m = d1.number_input("Month-to-month σ (%)", 0.0, 40.0, 8.0, 0.5, key="sig_m")
     win = d2.number_input("Day resampling window (± days)", 0, 15, 7, 1, key="win")
-    cap = d3.number_input("Hourly output limit (MW)", 0.0, value=float(round(float(np.max(series)), 3)), step=0.1, key="cap", help="Default: peak of the data")
-    L = d4.number_input("Delivery factor to MV bus", 0.5, 1.2, 1.0, 0.001, format="%.3f", key="L", help="1.000 if the series is already at the MV collector bus")
+    if F.get("grid_limit_mw"):
+        cap_default = float(F["grid_limit_mw"])
+    elif st.session_state.get("add_back") and lim is not None:
+        cap_default = float(round(float(np.max(cand.values * fct)), 3))   # E_Grid's own ceiling
+    else:
+        cap_default = float(round(float(np.max(series)), 3))
+    cap = d3.number_input("Grid (POI) limit (MW)", 0.0, value=cap_default, step=0.1, key="cap",
+                          help="Output limit applied after scaling. Default: grid limit from the PVsyst report. Raise it if the limit does not apply at your measuring point.")
     seed = d5.number_input("Random seed", 1, 2**31 - 1, 2026, 1, key="seed")
+hv = F.get("hv_loss_pct")
+ref_opts = ["Grid connection point (as PVsyst E_Grid)", "34.5 kV MV bus (before HV transformer)", "Custom factor"]
+m1, m2, m3 = st.columns([2, 2, 1])
+ref_point = m1.selectbox("Energy measured at", ref_opts, key="ref_point",
+                         help="PVsyst E_Grid is at the grid connection point, after the HV transformer. The CFE model uses the MV collector bus.")
+mode_lbl = m2.selectbox("Weather variation applied to", ["Energy (PVsyst P50/P90 method)", "Sunlight, then grid limit (physical)"], key="mode_lbl",
+                        help="PVsyst applies its year-to-year variability to annual energy. The physical option scales sunlight and re-applies the grid limit, so poor years lose less where output was limited.")
+mode = "energy" if mode_lbl.startswith("Energy") else "resource"
+if ref_point.startswith("Grid"):
+    L = 1.0
+elif ref_point.startswith("34.5"):
+    L = 1 / (1 - (hv if hv else 0.8) / 100)
+    m3.metric("Factor", f"{L:.4f}", help=f"1 / (1 − {fmt(hv if hv else 0.8, 1)}% HV transformer loss{' from the report' if hv else ', typical value'})")
+else:
+    L = m3.number_input("Factor", 0.5, 1.2, 1.0, 0.0001, format="%.4f", key="L_custom", help="Multiplier applied to generation, e.g. 0.973832 / 0.992 = 0.9817")
 
 n_years = int(y1 - y0 + 1)
 if n_years * runs > LIMIT:
@@ -308,7 +337,7 @@ if E.deg_factor(int(y1), deg, deg_model) <= 0:
     st.stop()
 
 cfg = E.Config(cod=int(cod), y0=int(y0), y1=int(y1), deg=float(deg), deg_model=deg_model, sig_w=float(sig_w), use_unc=bool(use_unc), sig_t=float(sig_t),
-               sig_m=float(sig_m), win=int(win), runs=int(runs), seed=int(seed), cap=float(cap), L=float(L))
+               sig_m=float(sig_m), win=int(win), runs=int(runs), seed=int(seed), cap=float(cap), L=float(L), mode=mode)
 series = np.asarray(series, dtype=float)
 with st.spinner(f"Simulating {n_years} year(s) × {runs:,} runs…"):
     sim = run_sim(series, dataclasses.astuple(cfg))
@@ -341,7 +370,7 @@ fan.add_trace(go.Bar(x=yrs, y=[(r.P[10] - r.P[90]) / 1000 for r in years], base=
 fan.add_trace(go.Scatter(x=yrs, y=[r.P[50] / 1000 for r in years], name="P50", mode="lines+markers", line=dict(color=ACC, width=3)))
 fan.add_trace(go.Scatter(x=yrs, y=[r.P[90] / 1000 for r in years], name="P90", mode="lines", line=dict(color=INK, width=1.5, dash="dot")))
 fan.add_trace(go.Scatter(x=yrs, y=[r.det / 1000 for r in years], name="Degradation only", mode="lines", line=dict(color=BLUE, width=1.5, dash="dash")))
-fan.update_layout(title="Annual generation by year (GWh)", height=380, margin=dict(l=10, r=10, t=40, b=10), xaxis_title="Project year",
+fan.update_layout(title="Annual net E_Grid by year (GWh)", height=380, margin=dict(l=10, r=10, t=40, b=10), xaxis_title="Project year",
                   yaxis_title="GWh", legend=dict(orientation="h", y=-0.2), bargap=0.45)
 st.plotly_chart(fan, **full(st.plotly_chart))
 
@@ -354,23 +383,25 @@ table = pd.DataFrame(rows_tbl)
 st.dataframe(table.style.format({c: "{:,.0f}" for c in table.columns if "MWh" in c} | {"P90/P50 (%)": "{:.1f}", "Degradation factor": "{:.4f}"}, na_rep=""),
              **full(st.dataframe), hide_index=True, height=min(420, 38 + 35 * len(table)))
 st.caption("Each year is simulated separately. The total row gives P-levels of the range total across runs, not the sum of single-year values. "
-           "Generation only; night auxiliary import is excluded.")
+           "All values are net E_Grid (generation minus night transformer losses), as in PVsyst. P50 equals the source simulation × degradation.")
 
 st.subheader("Year in detail")
 view = st.selectbox("Show year", yrs, index=min(len(yrs) - 1, yrs.index(10)) if 10 in yrs else len(yrs) - 1,
                     format_func=lambda y: f"Year {y} ({cfg.cal(y)})", key="view_year")
 res = sim["by_year"][view]
-base = E.profile(series)["annual"] * cfg.L
+aux_m = res.pre.aux_m
+base = float(E.det_series(series, 1.0, cfg.cap, cfg.L).sum() + res.pre.aux_tot)   # year-1 net E_Grid
 det = E.det_series(series, res.D, cfg.cap, cfg.L)
 detp = E.profile(det)
-for col, (k, v) in zip(st.columns(5), [("Degradation only", detp["annual"]), ("P50", res.P[50]), ("P75", res.P[75]), ("P90", res.P[90]), ("P95", res.P[95])]):
+detp["monthly"] = detp["monthly"] + aux_m
+for col, (k, v) in zip(st.columns(5), [("Degradation only", res.det), ("P50", res.P[50]), ("P75", res.P[75]), ("P90", res.P[90]), ("P95", res.P[95])]):
     col.metric(k, f"{fmt(v / 1000, 1)} GWh", f"{(v / base - 1) * 100:+.1f}% vs year 1", delta_color="off")
 
 h1, h2 = st.columns(2)
 hist = go.Figure(go.Histogram(x=res.annual / 1000, nbinsx=40, marker_color=ACC, name="Runs"))
 for p, colr in ((50, INK), (90, BLUE), (95, "#845BA6")):
     hist.add_vline(x=res.P[p] / 1000, line=dict(color=colr, dash="dash"), annotation_text=f"P{p}", annotation_position="top")
-hist.update_layout(title=f"Annual energy across all runs, year {view} (GWh)", height=340, margin=dict(l=10, r=10, t=50, b=10), showlegend=False, xaxis_title="GWh", yaxis_title="Runs")
+hist.update_layout(title=f"Annual net E_Grid across all runs, year {view} (GWh)", height=340, margin=dict(l=10, r=10, t=50, b=10), showlegend=False, xaxis_title="GWh", yaxis_title="Runs")
 h1.plotly_chart(hist, **full(st.plotly_chart))
 mq = res.monthly_q
 band = go.Figure()
@@ -378,7 +409,7 @@ band.add_trace(go.Bar(x=[m[:3] for m in E.MONTHS], y=[q["p10"] - q["p90"] for q 
                       marker=dict(color="rgba(194,116,0,0.22)", line=dict(color=ACC, width=1))))
 band.add_trace(go.Scatter(x=[m[:3] for m in E.MONTHS], y=[q["p50"] for q in mq], mode="markers", name="P50", marker=dict(color=ACC, symbol="line-ew-open", size=22, line=dict(width=3))))
 band.add_trace(go.Scatter(x=[m[:3] for m in E.MONTHS], y=detp["monthly"], mode="markers", name="Degradation only", marker=dict(color=BLUE, size=8)))
-band.update_layout(title="Monthly range across runs (MWh)", height=340, margin=dict(l=10, r=10, t=50, b=10), legend=dict(orientation="h", y=-0.2))
+band.update_layout(title="Monthly net E_Grid range across runs (MWh)", height=340, margin=dict(l=10, r=10, t=50, b=10), legend=dict(orientation="h", y=-0.2))
 h2.plotly_chart(band, **full(st.plotly_chart))
 
 spread = (1 - res.P[90] / res.P[50]) * 100
@@ -433,7 +464,7 @@ if f2.button("Prepare Excel workbook", **full(st.button)) or st.session_state.ge
     f2.download_button("Download Excel workbook", data, file_name=f"{X.tag(report, meta)}_PV_Scaling_Y{y0}-{y1}.xlsx",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", **full(st.download_button))
 st.caption("The single-year 8760 holds hourly MW at the MV bus for the base year, the degradation-only case and representative P50, P75, P90 and P95 profiles, "
-           "plus auxiliary import from the grid. The multi-year 8760 holds P50 and P90 profiles for every year in the range, ready for the CFE/BESS dispatch model.")
+           "plus night import from the grid (transformer losses). The multi-year 8760 holds P50 and P90 profiles for every year in the range, ready for the CFE/BESS dispatch model.")
 
 with st.expander("How the scaling works"):
     st.markdown("""
@@ -442,6 +473,8 @@ with st.expander("How the scaling works"):
 3. **Modelling uncertainty, per run.** If ticked, one extra factor is drawn per run and applied to every year of that run, because a systematic model error does not average out. A single year still gets PVsyst's total σ.
 4. **Monthly pattern.** Monthly energy is perturbed by the month-to-month σ, then rescaled so the year total matches the annual draw.
 5. **Daily shapes.** Whole days are resampled from nearby days in the same month, so each run has a realistic sequence of clear and cloudy days. Hourly shapes always come from your data.
-6. **Limits.** Hours above the output limit (POI or inverter AC) are clipped. Night-time negative values are auxiliary load, supplied by the grid, and are never scaled.
-7. **P-levels.** P90 is the energy exceeded in 90% of runs. Multi-year P-levels come from each run's total over the range, not from adding single-year values. Each exported P-level profile is the run closest to that energy, trimmed to match it exactly.
+6. **Limits.** When the grid-limited energy column (EGrdLim) is available, the unclipped power is scaled and the grid limit is re-applied, so hours at the limit are handled correctly. Night-time negative values are transformer no-load losses, supplied by the grid, and are never scaled.
+7. **P50 anchoring.** Each year's runs are scaled so that P50 equals the source simulation × degradation for that year (PVsyst's definition of P50). The spread of the runs sets P75, P90 and P95. In the PVsyst method the weather factor scales delivered energy; in the physical method it scales sunlight before the grid limit.
+8. **Basis.** All energy results are net E_Grid (generation minus night transformer losses), at the selected measuring point.
+9. **P-levels.** P90 is the energy exceeded in 90% of runs. Multi-year P-levels come from each run's total over the range, not from adding single-year values. Each exported P-level profile is the run closest to that energy, trimmed to match it exactly.
 """)
